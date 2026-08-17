@@ -56,21 +56,25 @@ The toolbar also exposes prefix controls for mouse users (◀ ▶ Goto Check all
 
 ## Build and run
 
-Requires macOS with Xcode command-line tools (raylib 6.0, raygui, and the
-JetBrains Mono font are vendored under `vendor/`; no Homebrew needed — the
-Makefile builds raylib once into `vendor/raylib/src/libraylib.a`).
+Requires macOS with Xcode command-line tools and [go-task](https://taskfile.dev)
+(`brew install go-task`). raylib 6.0, raygui, and the JetBrains Mono font are
+vendored under `vendor/`; no other build system or Homebrew package is needed
+— `task` compiles raylib itself into `vendor/raylib/src/libraylib.a`.
 
 ```sh
-make run          # builds bin/emerald-ide, opens the ray-tracer demo
+task run          # builds bin/emerald-ide, opens the ray-tracer demo
 ./bin/emerald-ide path/to/file.rald
-make test         # golden session tests (headless driver vs tests/*.expected)
-make bless        # regenerate the golden expectations
+task test         # golden session tests (headless driver vs tests/*.expected)
+task bless        # regenerate the golden expectations
 ```
 
 The `emeraldc` binary is resolved at startup from `$EMERALDC`, then `$PATH`,
 then `../emerald/bin/emeraldc` (the sibling checkout of the compiler). The
 status bar shows which one is in use; without any of them the IDE falls back
 to its built-in linter.
+
+The window icon is `resources/nerv.png` (loaded at startup; the app still
+runs if it is missing).
 
 Two env vars are handy for smoke-testing: `EMERALD_IDE_SHOT=<path>` takes a
 screenshot after 30 frames and exits, and `EMERALD_IDE_TAB=0|1|2` selects the
@@ -85,7 +89,7 @@ src/json.c     minimal JSON parser for --check --json output
 src/session.c  statement splitter, locus state machine, emeraldc runner,
                built-in linter, goal env, obligation ledger, REPL
 src/ui.c       raygui front end (window, panels, input, main)
-headless/      scripted session driver (make headless)
+headless/      scripted session driver (task headless)
 tests/         golden session scripts (.script) + expectations (.expected)
 vendor/        raylib 6.0, raygui v5.0, JetBrains Mono (see vendor/README.md)
 ```

@@ -5,7 +5,7 @@ sources.
 
 | Path | What | License |
 |---|---|---|
-| `raylib/` | [raylib](https://github.com/raysan5/raylib) 6.0, full source (built into `src/libraylib.a` by the Makefile) | zlib |
+| `raylib/` | [raylib](https://github.com/raysan5/raylib) 6.0, full source (compiled into `src/libraylib.a` by the `raylib` task in the project's Taskfile.yml) | zlib |
 | `raygui.h` | [raygui](https://github.com/raysan5/raygui) v5.0, header-only (implementation behind `RAYGUI_IMPLEMENTATION`) | zlib |
 | `fonts/JetBrainsMono-Regular.ttf` | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) Regular — the editor's monospace font | OFL-1.1 |
 

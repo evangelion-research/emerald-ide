@@ -112,7 +112,7 @@ static Font ide_font_load(void) {
     int cps[512];
     int n = 0;
     for (int c = 0x20; c <= 0x7E; c++) cps[n++] = c;          /* ASCII */
-    for (int c = 0xA0; c <= 0xFF; c++) cps[n++] = c;          /* Latin-1 */
+    for (int c = 0xA0; c <= 0xFF; c++) if (c != 0xAD) cps[n++] = c; /* Latin-1 */
     const int extra[] = {
         0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026,
         0x2190, 0x2191, 0x2192, 0x2193, 0x25B6, 0x25C0, 0x25CF,
@@ -1189,6 +1189,19 @@ int main(int argc, char **argv) {
     InitWindow(1280, 800, "Emerald IDE");
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
+
+    /* window icon (resources/nerv.png; ignored if missing).
+     * GLFW warns that regular macOS windows have no icon (it applies to
+     * bundled .app bundles instead); suppress just that message. */
+    Image icon = LoadImage("resources/nerv.png");
+    if (icon.data) {
+        ImageFormat(&icon, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        SetTraceLogLevel(LOG_ERROR);
+        SetWindowIcon(icon);
+        SetTraceLogLevel(LOG_INFO);
+    }
+    UnloadImage(icon);
+
     g_font = ide_font_load();
     GuiSetFont(g_font);
     style_setup();
