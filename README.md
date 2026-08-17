@@ -9,6 +9,8 @@ This is the cimgui-style prototype step of the spec's suggested order —
 built on raygui instead of Dear ImGui — with the real compiler doing the
 checking.
 
+![emerald-ide](./public/emerald-ide.png)
+
 ## What it does
 
 - **Edit `.rald` files.** Open (drag-drop, ⌘O, or the Open button), save
