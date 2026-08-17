@@ -105,6 +105,7 @@ typedef struct {
     int   ndiags;
     char  last_error[512];
     double last_check_ms;
+    unsigned gen;         /* generation of the check the UI expects results for */
 } Session;
 
 /* obligation ledger */
@@ -151,7 +152,10 @@ const char *bundle_resources(void);
 /* session operations */
 void sess_split_statements(Doc *d);
 void sess_clear(Doc *d);
-void sess_check(Doc *d);           /* re-check prefix [0, locus) */
+void sess_check(Doc *d);           /* re-check prefix [0, locus); async, never blocks */
+void sess_poll(Doc *d);            /* apply the newest completed check (call each frame) */
+void sess_wait(Doc *d);            /* block until in-flight checks finish (headless) */
+void sess_checker_shutdown(void);  /* stop the worker thread (at exit) */
 void sess_advance(Doc *d);
 void sess_retract(Doc *d);
 void sess_goto_cursor(Doc *d);

@@ -1,0 +1,11 @@
+state locus=4 status=1 first_failing=4 nstmts=4 ndiags=0
+  obligations=0
+state locus=4 status=1 first_failing=4 nstmts=4 ndiags=0
+  obligations=0
+state locus=4 status=1 first_failing=4 nstmts=4 ndiags=0
+  obligations=0
+state locus=1 status=1 first_failing=4 nstmts=4 ndiags=0
+  obligations=0
+state locus=3 status=2 first_failing=0 nstmts=3 ndiags=1
+  diag line=2 col=26 code=E_TYPE_RETURN msg=returning "oops" from a function declared to return int
+  obligations=0

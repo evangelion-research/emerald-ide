@@ -1,0 +1,6 @@
+# multi/main.rald — a local module next to the source (relative import)
+from vec import add, scale
+
+a = add(1, 2)
+b = scale(a, 3)
+c = add(b, b)

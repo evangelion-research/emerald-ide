@@ -1,0 +1,15 @@
+# imports/main.rald — stdlib imports resolve via the compiler's stdlib root
+from lists import push, concat
+from strings import split, join
+
+xs = []
+push(xs, 1)
+push(xs, 2)
+ys = concat(xs, xs)
+parts = split("a,b,c", ",")
+line = join("-", parts)
+total = len(xs) + len(ys) + len(parts) + len(line)
+
+def summarize() -> int {
+    return total
+}

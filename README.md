@@ -97,9 +97,15 @@ open "dist/Emerald IDE.app"              # or double-click in Finder
 open -a "Emerald IDE" /path/to/file.rald  # open a file with it
 ```
 
-Two env vars are handy for smoke-testing: `EMERALD_IDE_SHOT=<path>` takes a
-screenshot after 30 frames and exits, and `EMERALD_IDE_TAB=0|1|2` selects the
-initial bottom tab.
+Three env vars are handy for smoke-testing: `EMERALD_IDE_SHOT=<path>` takes a
+screenshot after 30 frames and exits, `EMERALD_IDE_TAB=0|1|2` selects the
+initial bottom tab, and `EMERALD_IDE_CHECK_TIMEOUT_MS=<ms>` shrinks the
+compiler timeout (used by the golden tests to exercise the timeout path).
+
+The golden suite (`task test`) now covers stdlib imports, multi-module
+resolution (a local module next to the source), and subprocess failures
+(exec failure falling back to the built-in linter, non-JSON output, and a
+hanging compiler).
 
 ## Layout
 

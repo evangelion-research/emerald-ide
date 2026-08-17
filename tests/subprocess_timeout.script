@@ -1,0 +1,6 @@
+# subprocess failure: emeraldc hangs (EMERALDC=tests/fixtures/fake_slow with
+# EMERALD_IDE_CHECK_TIMEOUT_MS=500) — both the prefix check and the REPL
+# check must time out instead of blocking
+open ../emerald/tests/check/bad_annot.rald
+retract
+repl 1 + 1

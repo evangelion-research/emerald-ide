@@ -64,6 +64,9 @@ tasks:
           name="${s%.script}"
           case "$s" in
             *builtin*) (cd /tmp && env -i "{{.TASKFILE_DIR}}/bin/headless" "{{.TASKFILE_DIR}}/$s") > "$name.out" 2>&1 || true ;;
+            *subprocess_garbage*) EMERALDC=/usr/bin/false ./bin/headless "$s" > "$name.out" 2>&1 || true ;;
+            *subprocess_exec*) EMERALDC=/tmp ./bin/headless "$s" > "$name.out" 2>&1 || true ;;
+            *subprocess_timeout*) chmod +x tests/fixtures/fake_slow && EMERALDC="{{.TASKFILE_DIR}}/tests/fixtures/fake_slow" EMERALD_IDE_CHECK_TIMEOUT_MS=500 ./bin/headless "$s" > "$name.out" 2>&1 || true ;;
             *) ./bin/headless "$s" > "$name.out" 2>&1 || true ;;
           esac
           if diff -u "$name.expected" "$name.out" > /tmp/eide_diff.$$ 2>&1; then
@@ -87,6 +90,9 @@ tasks:
           name="${s%.script}"
           case "$s" in
             *builtin*) (cd /tmp && env -i "{{.TASKFILE_DIR}}/bin/headless" "{{.TASKFILE_DIR}}/$s") > "$name.expected" 2>&1 || true ;;
+            *subprocess_garbage*) EMERALDC=/usr/bin/false ./bin/headless "$s" > "$name.expected" 2>&1 || true ;;
+            *subprocess_exec*) EMERALDC=/tmp ./bin/headless "$s" > "$name.expected" 2>&1 || true ;;
+            *subprocess_timeout*) chmod +x tests/fixtures/fake_slow && EMERALDC="{{.TASKFILE_DIR}}/tests/fixtures/fake_slow" EMERALD_IDE_CHECK_TIMEOUT_MS=500 ./bin/headless "$s" > "$name.expected" 2>&1 || true ;;
             *) ./bin/headless "$s" > "$name.expected" 2>&1 || true ;;
           esac
           echo "blessed $name"

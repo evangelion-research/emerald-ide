@@ -1,0 +1,2 @@
+def add(a: int, b: int) -> int pure { return a + b }
+def bad(x: int) -> int { return "oops" }

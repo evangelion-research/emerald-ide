@@ -1,0 +1,3 @@
+#!/bin/sh
+# fake emeraldc: hangs forever (used with EMERALD_IDE_CHECK_TIMEOUT_MS)
+exec sleep 30

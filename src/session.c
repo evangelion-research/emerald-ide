@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,22 @@ static double now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+/* Compiler timeout in ms. EMERALD_IDE_CHECK_TIMEOUT_MS overrides it — a
+ * test hook so the golden tests can exercise the timeout path without
+ * waiting the full 10 s. */
+static int check_timeout_ms(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = CHECK_TIMEOUT_MS;
+        const char *e = getenv("EMERALD_IDE_CHECK_TIMEOUT_MS");
+        if (e && *e) {
+            int v = atoi(e);
+            if (v >= 50) cached = v;   /* floor: never a 0-ms deadline */
+        }
+    }
+    return cached;
 }
 
 /* split "/a/b/c.rald" into dir and base (static buffers, not reentrant) */
@@ -505,144 +522,215 @@ static void temp_path_for(const Doc *d, char *out, size_t cap) {
 /* the session                                                         */
 /* ------------------------------------------------------------------ */
 
-void sess_clear(Doc *d) {
-    d->sess.status = SESS_IDLE;
-    d->sess.first_failing = d->nstmts;
-    d->sess.last_error[0] = '\0';
-    free_diags(d);
+/* ------------------------------------------------------------------ */
+/* check worker                                                        */
+/* ------------------------------------------------------------------ */
+/*
+ * Checks run on a worker thread so the UI never blocks. sess_check()
+ * snapshots everything the check needs (the prefix text, the statement
+ * table, the compiler path, the temp path) into a CheckReq and hands it
+ * to the worker; the worker runs emeraldc and publishes a CheckResult.
+ * A generation counter makes stale results harmless: prefix submits and
+ * every sess_clear() bump the Doc's expected generation (REPL submits peek
+ * instead, so a REPL result can't evict an in-flight prefix check), and
+ * sess_poll() only applies results whose generation still matches. The
+ * worker never touches the Doc — it works entirely on the snapshot.
+ */
+
+enum { CHECK_PREFIX = 0, CHECK_REPL = 1 };
+
+typedef struct {
+    unsigned gen;
+    int      mode;            /* CHECK_PREFIX | CHECK_REPL */
+    int      nstmts;          /* statement count at submit time */
+    int      locus;           /* accepted-prefix statement count at submit */
+    char     compiler[1024];
+    char     tmppath[2048];
+    char    *text;            /* snapshot of lines [0..end_line] joined with \n */
+    char     repl_expr[1024]; /* CHECK_REPL */
+    Statement *stmts;         /* snapshot of the statement table */
+} CheckReq;
+
+typedef struct {
+    unsigned gen;
+    int      mode;
+    int      status;          /* SESS_* */
+    int      first_failing;
+    Diag    *diags;
+    int      ndiags;
+    char     last_error[512];
+    double   last_check_ms;
+    char     repl_output[4096]; /* CHECK_REPL */
+    bool     fell_back;       /* compiler vanished mid-run; builtin linter used */
+} CheckResult;
+
+static pthread_mutex_t g_check_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_check_cond  = PTHREAD_COND_INITIALIZER;
+static pthread_t       g_worker;
+static bool            g_worker_started = false;
+static bool            g_no_worker = false; /* worker could not be created */
+static bool            g_shutdown = false;
+static bool            g_busy = false;      /* worker is running a request */
+static unsigned        g_gen = 0;           /* global generation counter */
+static CheckReq        g_pending;
+static bool            g_has_pending = false;
+static CheckResult     g_result;            /* latest completed prefix check */
+static bool            g_has_result = false;
+static CheckResult     g_repl_result;       /* latest completed REPL check */
+static bool            g_has_repl_result = false;
+
+static void free_req(CheckReq *r) {
+    free(r->text);
+    free(r->stmts);
+    memset(r, 0, sizeof *r);
+}
+
+static void free_res(CheckResult *r) {
+    free(r->diags);
+    memset(r, 0, sizeof *r);
+}
+
+/* Bump the generation the Doc expects results for; returns the new value.
+ * Any result published for an older generation is discarded by sess_poll. */
+static unsigned sess_bump_gen(Doc *d) {
+    pthread_mutex_lock(&g_check_lock);
+    d->sess.gen = ++g_gen;
+    pthread_mutex_unlock(&g_check_lock);
+    return d->sess.gen;
+}
+
+/* read the generation the Doc expects results for, without bumping it.
+ * REPL checks use this: applying a REPL result must not invalidate an
+ * in-flight prefix check, but a later edit or advance (which bumps the
+ * generation) must still discard a stale REPL result. */
+static unsigned sess_peek_gen(Doc *d) {
+    pthread_mutex_lock(&g_check_lock);
+    unsigned g = d->sess.gen;
+    pthread_mutex_unlock(&g_check_lock);
+    return g;
 }
 
 /* map a 1-based diag line in the checked prefix to an entry statement */
-static int stmt_for_line(const Doc *d, int line) {
-    /* line is 1-based; statements hold 0-based start lines */
+static int stmt_for_line_snap(const Statement *stmts, int nstmts, int line) {
     int l = line - 1;
-    for (int i = 0; i < d->nstmts; i++)
-        if (l >= d->stmts[i].start_line && l <= d->stmts[i].end_line)
+    for (int i = 0; i < nstmts; i++)
+        if (l >= stmts[i].start_line && l <= stmts[i].end_line)
             return i;
-    return sess_stmt_at_line(d, l);
+    int lo = 0, hi = nstmts;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (stmts[mid].start_line <= l) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo > 0 ? lo - 1 : 0;
 }
 
-static void mark_import_failure(Doc *d) {
-    /* an imported module failed and nothing in the entry mentions it:
-     * shade everything from the last import on as failing */
+static void mark_import_failure_snap(const Statement *stmts, int nstmts,
+                                     CheckResult *res) {
     int last_import = -1;
-    for (int i = 0; i < d->nstmts; i++)
-        if (d->stmts[i].kind == STMT_IMPORT) last_import = i;
-    d->sess.first_failing = last_import >= 0 ? last_import : 0;
+    for (int i = 0; i < nstmts; i++)
+        if (stmts[i].kind == STMT_IMPORT) last_import = i;
+    res->first_failing = last_import >= 0 ? last_import : 0;
 }
 
-/* the built-in linter: no compiler, only structural checks */
-static void mock_check(Doc *d) {
-    d->sess.status = SESS_OK;
-    d->sess.first_failing = d->nstmts;
-    d->sess.last_error[0] = '\0';
-    free_diags(d);
+/* the built-in linter (snapshot variant): no compiler, only structural
+ * checks. `count` is the accepted-prefix statement count — statements
+ * beyond the locus are not in scope and must not fail the check. */
+static void mock_check_snap(const Statement *stmts, int count, CheckResult *res) {
+    res->status = SESS_OK;
+    res->first_failing = count;
+    res->last_error[0] = '\0';
+    res->diags = NULL;
+    res->ndiags = 0;
 
-    for (int i = 0; i < d->nstmts; i++) {
-        if (d->stmts[i].unterminated) {
-            d->sess.status = SESS_FAILED;
-            d->sess.first_failing = i;
+    for (int i = 0; i < count; i++) {
+        if (stmts[i].unterminated) {
+            res->status = SESS_FAILED;
+            res->first_failing = i;
             Diag *dg = calloc(1, sizeof(Diag));
             if (!dg) { fputs("emerald-ide: out of memory\n", stderr); exit(1); }
             snprintf(dg->kind, sizeof dg->kind, "syntax");
             snprintf(dg->severity, sizeof dg->severity, "error");
             snprintf(dg->code, sizeof dg->code, "E_UNTERMINATED");
-            dg->line = d->stmts[i].end_line + 1;
-            dg->col = d->stmts[i].end_col + 1;
+            dg->line = stmts[i].end_line + 1;
+            dg->col = stmts[i].end_col + 1;
             snprintf(dg->message, sizeof dg->message,
                      "unterminated block or string (builtin linter; emeraldc not found)");
             dg->from_entry = true;
-            d->sess.diags = dg;
-            d->sess.ndiags = 1;
+            res->diags = dg;
+            res->ndiags = 1;
             break;
         }
     }
 }
 
-void sess_check(Doc *d) {
-    d->sess.last_error[0] = '\0';
-    free_diags(d);
+/* run emeraldc --check --json over the snapshot prefix; fills res. */
+static void run_prefix_check(const CheckReq *req, CheckResult *res) {
+    res->status = SESS_ERROR;   /* until a definitive outcome is known */
+    res->first_failing = req->nstmts;
 
-    if (d->nstmts == 0) {
-        d->sess.status = SESS_OK;
-        d->sess.first_failing = 0;
-        return;
-    }
-    if (d->sess.locus <= 0) {
-        d->sess.status = SESS_IDLE;
-        d->sess.first_failing = 0;
-        return;
-    }
-
-    if (d->using_builtin || d->compiler[0] == '\0') {
-        double t0 = now_ms();
-        mock_check(d);
-        d->sess.last_check_ms = now_ms() - t0;
-        return;
-    }
-
-    int end_line = d->stmts[d->sess.locus - 1].end_line;
-    Buffer *b = &d->buf;
-
-    char tmppath[2048];
-    temp_path_for(d, tmppath, sizeof tmppath);
-    FILE *f = fopen(tmppath, "wb");
+    FILE *f = fopen(req->tmppath, "wb");
     if (!f) {
-        d->sess.status = SESS_ERROR;
-        snprintf(d->sess.last_error, sizeof d->sess.last_error,
-                 "cannot write check file '%s': %s", tmppath, strerror(errno));
+        snprintf(res->last_error, sizeof res->last_error,
+                 "cannot write check file '%s': %s", req->tmppath, strerror(errno));
         return;
     }
-    for (int i = 0; i <= end_line && i < b->count; i++) {
-        fwrite(b->lines[i], 1, (size_t)b->lens[i], f);
-        fputc('\n', f);
-    }
+    fputs(req->text, f);
     fclose(f);
 
-    const char *argv[] = { d->compiler, "--check", "--json", tmppath, NULL };
-    RunResult res;
+    const char *argv[] = { req->compiler, "--check", "--json", req->tmppath, NULL };
+    RunResult rr;
     double t0 = now_ms();
-    run_cmd(argv, CHECK_TIMEOUT_MS, &res);
-    d->sess.last_check_ms = now_ms() - t0;
+    run_cmd(argv, check_timeout_ms(), &rr);
+    res->last_check_ms = now_ms() - t0;
+    unlink(req->tmppath);
 
-    unlink(tmppath);
-
-    if (res.timed_out) {
-        d->sess.status = SESS_ERROR;
-        snprintf(d->sess.last_error, sizeof d->sess.last_error,
-                 "emeraldc timed out after %d ms", CHECK_TIMEOUT_MS);
+    if (rr.timed_out) {
+        res->status = SESS_ERROR;
+        snprintf(res->last_error, sizeof res->last_error,
+                 "emeraldc timed out after %d ms", check_timeout_ms());
         return;
     }
-    if (res.exit_code == 127) {
+    if (rr.exit_code == 127) {
         /* exec failed — compiler disappeared between resolve and run */
-        d->using_builtin = true;
-        mock_check(d);
+        res->fell_back = true;
+        mock_check_snap(req->stmts, req->locus, res);
         return;
     }
-    if (res.exit_code < 0) {
-        d->sess.status = SESS_ERROR;
-        snprintf(d->sess.last_error, sizeof d->sess.last_error,
-                 "could not run '%s'", d->compiler);
+    if (rr.exit_code < 0) {
+        res->status = SESS_ERROR;
+        snprintf(res->last_error, sizeof res->last_error,
+                 "could not run '%s'", req->compiler);
         return;
     }
 
     Diag *diags = calloc((size_t)DIAG_MAX, sizeof(Diag));
     if (!diags) { fputs("emerald-ide: out of memory\n", stderr); exit(1); }
-    int nd = json_parse_diags(res.out, diags, DIAG_MAX);
+    int nd = json_parse_diags(rr.out, diags, DIAG_MAX);
 
-    /* flag which diags belong to the checked entry file */
     char expect[600];
-    snprintf(expect, sizeof expect, "%s", tmppath);
+    snprintf(expect, sizeof expect, "%s", req->tmppath);
     for (int i = 0; i < nd; i++)
         diags[i].from_entry = (strcmp(diags[i].file, expect) == 0);
 
-    if (res.exit_code == 0 || nd == 0) {
-        /* accepted */
-        d->sess.status = SESS_OK;
-        d->sess.first_failing = d->nstmts;
+    if (rr.exit_code == 0 && nd == 0) {
+        /* clean accept: no diagnostics reported */
+        res->status = SESS_OK;
+        res->first_failing = req->nstmts;
         free(diags);
-        d->sess.diags = NULL;
-        d->sess.ndiags = 0;
+        res->diags = NULL;
+        res->ndiags = 0;
+        return;
+    }
+    if (nd == 0) {
+        /* the compiler failed and produced nothing we can map — surface an
+         * error instead of silently accepting the prefix */
+        res->status = SESS_ERROR;
+        snprintf(res->last_error, sizeof res->last_error,
+                 "emeraldc exited %d with no JSON diagnostics", rr.exit_code);
+        free(diags);
+        res->diags = NULL;
+        res->ndiags = 0;
         return;
     }
 
@@ -655,12 +743,285 @@ void sess_check(Doc *d) {
             entry_err = true;
         }
     }
-    d->sess.diags = diags;
-    d->sess.ndiags = nd;
-    d->sess.status = SESS_FAILED;
-    d->sess.first_failing = entry_err ? stmt_for_line(d, first_line)
-                                      : (d->nstmts > 0 ? d->nstmts : 0);
-    if (!entry_err) mark_import_failure(d);
+    res->diags = diags;
+    res->ndiags = nd;
+    res->status = SESS_FAILED;
+    res->first_failing = entry_err ? stmt_for_line_snap(req->stmts, req->nstmts, first_line)
+                                   : (req->nstmts > 0 ? req->nstmts : 0);
+    if (!entry_err) mark_import_failure_snap(req->stmts, req->nstmts, res);
+}
+
+/* REPL: type-check `print(expr)` appended to the snapshot prefix. */
+static void run_repl_check(const CheckReq *req, CheckResult *res) {
+    FILE *f = fopen(req->tmppath, "wb");
+    if (!f) {
+        snprintf(res->repl_output, sizeof res->repl_output,
+                 "cannot write check file: %s", strerror(errno));
+        return;
+    }
+    fputs(req->text, f);
+    fprintf(f, "print(%s)\n", req->repl_expr);
+    fclose(f);
+
+    const char *argv[] = { req->compiler, "--check", "--json", req->tmppath, NULL };
+    RunResult rr;
+    double t0 = now_ms();
+    run_cmd(argv, check_timeout_ms(), &rr);
+    double ms = now_ms() - t0;
+    unlink(req->tmppath);
+
+    if (rr.timed_out) {
+        snprintf(res->repl_output, sizeof res->repl_output,
+                 "emeraldc timed out after %d ms", check_timeout_ms());
+        return;
+    }
+    if (rr.exit_code == 0) {
+        snprintf(res->repl_output, sizeof res->repl_output,
+                 "\xE2\x9C\x93 typechecks in the accepted scope   (%d ms)\n"
+                 "(inferred type shown once emeraldc --env-at lands)",
+                 (int)ms);
+        return;
+    }
+    Diag diags[8];
+    int nd = json_parse_diags(rr.out, diags, 8);
+    if (nd == 0) {
+        snprintf(res->repl_output, sizeof res->repl_output,
+                 "check failed (exit %d) with no JSON diagnostics", rr.exit_code);
+        return;
+    }
+    const Diag *g = &diags[nd - 1];
+    size_t n = 0;
+    n += (size_t)snprintf(res->repl_output + n, sizeof res->repl_output - n,
+                          "\xE2\x9C\x97 line %d: %s\n", g->line, g->message);
+    if (g->expected[0])
+        n += (size_t)snprintf(res->repl_output + n, sizeof res->repl_output - n,
+                              "  expected: %s\n", g->expected);
+    if (g->actual[0])
+        n += (size_t)snprintf(res->repl_output + n, sizeof res->repl_output - n,
+                              "  actual:   %s\n", g->actual);
+    n += (size_t)snprintf(res->repl_output + n, sizeof res->repl_output - n,
+                          "  (%d ms)", (int)ms);
+}
+
+static void *check_worker_main(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_check_lock);
+        while (!g_has_pending && !g_shutdown)
+            pthread_cond_wait(&g_check_cond, &g_check_lock);
+        if (g_shutdown) { pthread_mutex_unlock(&g_check_lock); break; }
+        CheckReq req = g_pending;
+        g_has_pending = false;
+        g_busy = true;
+        pthread_mutex_unlock(&g_check_lock);
+
+        CheckResult res;
+        memset(&res, 0, sizeof res);
+        res.gen = req.gen;
+        res.mode = req.mode;
+        if (req.mode == CHECK_REPL) run_repl_check(&req, &res);
+        else run_prefix_check(&req, &res);
+
+        pthread_mutex_lock(&g_check_lock);
+        if (res.mode == CHECK_REPL) {
+            /* REPL results live in their own slot: a completed REPL check
+             * must not evict a valid prefix result (or vice versa). */
+            if (g_has_repl_result) free_res(&g_repl_result);
+            g_repl_result = res;
+            g_has_repl_result = true;
+        } else {
+            if (g_has_result) free_res(&g_result);   /* superseded */
+            g_result = res;
+            g_has_result = true;
+        }
+        g_busy = false;
+        pthread_cond_broadcast(&g_check_cond);
+        pthread_mutex_unlock(&g_check_lock);
+
+        free_req(&req);
+    }
+    return NULL;
+}
+
+static void apply_result(Doc *d, CheckResult *res);   /* defined below */
+
+/* snapshot the current prefix and hand it to the worker. */
+static void submit_check(Doc *d, int mode, int end_line, const char *repl_expr) {
+    CheckReq req;
+    memset(&req, 0, sizeof req);
+    req.mode = mode;
+    req.gen = (mode == CHECK_REPL) ? sess_peek_gen(d) : sess_bump_gen(d);
+    req.nstmts = d->nstmts;
+    req.locus = d->sess.locus;
+    snprintf(req.compiler, sizeof req.compiler, "%s", d->compiler);
+    temp_path_for(d, req.tmppath, sizeof req.tmppath);
+
+    size_t total = 1;
+    for (int i = 0; i <= end_line && i < d->buf.count; i++)
+        total += (size_t)d->buf.lens[i] + 1;
+    req.text = malloc(total);
+    if (!req.text) { fputs("emerald-ide: out of memory\n", stderr); exit(1); }
+    char *p = req.text;
+    for (int i = 0; i <= end_line && i < d->buf.count; i++) {
+        memcpy(p, d->buf.lines[i], (size_t)d->buf.lens[i]);
+        p += d->buf.lens[i];
+        *p++ = '\n';
+    }
+    *p = '\0';
+
+    req.stmts = malloc(sizeof(Statement) * (size_t)d->nstmts);
+    if (!req.stmts) { fputs("emerald-ide: out of memory\n", stderr); exit(1); }
+    memcpy(req.stmts, d->stmts, sizeof(Statement) * (size_t)d->nstmts);
+    if (repl_expr)
+        snprintf(req.repl_expr, sizeof req.repl_expr, "%s", repl_expr);
+
+    pthread_mutex_lock(&g_check_lock);
+    if (!g_worker_started && !g_shutdown) {
+        if (pthread_create(&g_worker, NULL, check_worker_main, NULL) == 0)
+            g_worker_started = true;
+        else
+            g_no_worker = true;
+    }
+    if (g_no_worker || g_shutdown) {
+        /* no worker available (pthread_create failed, or shutting down):
+         * run the check inline so the caller still gets a result. */
+        pthread_mutex_unlock(&g_check_lock);
+        CheckResult res;
+        memset(&res, 0, sizeof res);
+        res.gen = req.gen;
+        res.mode = req.mode;
+        if (req.mode == CHECK_REPL) run_repl_check(&req, &res);
+        else run_prefix_check(&req, &res);
+        if (res.gen == d->sess.gen) apply_result(d, &res);
+        free_res(&res);
+        free_req(&req);
+        return;
+    }
+    if (g_has_pending) free_req(&g_pending);   /* supersede queued request */
+    g_pending = req;
+    g_has_pending = true;
+    pthread_cond_signal(&g_check_cond);
+    pthread_mutex_unlock(&g_check_lock);
+}
+
+/* apply a completed result to the Doc (takes ownership of diags). REPL
+ * results only refresh repl_output; they never touch the session state the
+ * prefix check owns. */
+static void apply_result(Doc *d, CheckResult *res) {
+    if (res->mode == CHECK_REPL) {
+        if (res->repl_output[0])
+            snprintf(d->repl_output, sizeof d->repl_output, "%s", res->repl_output);
+        return;
+    }
+    free_diags(d);
+    d->sess.status = res->status;
+    d->sess.first_failing = res->first_failing;
+    d->sess.last_check_ms = res->last_check_ms;
+    if (res->last_error[0])
+        snprintf(d->sess.last_error, sizeof d->sess.last_error, "%s", res->last_error);
+    else
+        d->sess.last_error[0] = '\0';
+    d->sess.diags = res->diags;
+    d->sess.ndiags = res->ndiags;
+    res->diags = NULL;
+    res->ndiags = 0;
+    if (res->fell_back) d->using_builtin = true;
+}
+
+void sess_poll(Doc *d) {
+    pthread_mutex_lock(&g_check_lock);
+    if (g_has_result) {
+        if (g_result.gen == d->sess.gen) {
+            apply_result(d, &g_result);
+            free_res(&g_result);
+        } else {
+            free_res(&g_result);   /* stale: a newer request superseded it */
+        }
+        g_has_result = false;
+    }
+    if (g_has_repl_result) {
+        if (g_repl_result.gen == d->sess.gen) {
+            apply_result(d, &g_repl_result);
+            free_res(&g_repl_result);
+        } else {
+            free_res(&g_repl_result);
+        }
+        g_has_repl_result = false;
+    }
+    pthread_mutex_unlock(&g_check_lock);
+}
+
+void sess_wait(Doc *d) {
+    pthread_mutex_lock(&g_check_lock);
+    while ((g_has_pending || g_busy) && !g_shutdown)
+        pthread_cond_wait(&g_check_cond, &g_check_lock);
+    pthread_mutex_unlock(&g_check_lock);
+    sess_poll(d);
+}
+
+void sess_checker_shutdown(void) {
+    pthread_mutex_lock(&g_check_lock);
+    g_shutdown = true;
+    pthread_cond_broadcast(&g_check_cond);
+    pthread_mutex_unlock(&g_check_lock);
+    if (g_worker_started) {
+        pthread_join(g_worker, NULL);
+        g_worker_started = false;
+    }
+    pthread_mutex_lock(&g_check_lock);
+    if (g_has_pending) free_req(&g_pending);
+    if (g_has_result) free_res(&g_result);
+    if (g_has_repl_result) free_res(&g_repl_result);
+    g_has_pending = g_has_result = g_has_repl_result = false;
+    pthread_mutex_unlock(&g_check_lock);
+}
+
+void sess_clear(Doc *d) {
+    sess_bump_gen(d);   /* invalidate any in-flight check */
+    d->sess.status = SESS_IDLE;
+    d->sess.first_failing = d->nstmts;
+    d->sess.last_error[0] = '\0';
+    free_diags(d);
+}
+
+/* the built-in linter (Doc variant, synchronous — no subprocess). */
+static void mock_check(Doc *d) {
+    CheckResult res;
+    memset(&res, 0, sizeof res);
+    mock_check_snap(d->stmts, d->sess.locus, &res);
+    apply_result(d, &res);
+    free_res(&res);
+}
+
+void sess_check(Doc *d) {
+    d->sess.last_error[0] = '\0';
+
+    if (d->nstmts == 0) {
+        sess_bump_gen(d);
+        free_diags(d);
+        d->sess.status = SESS_OK;
+        d->sess.first_failing = 0;
+        return;
+    }
+    if (d->sess.locus <= 0) {
+        sess_bump_gen(d);
+        free_diags(d);
+        d->sess.status = SESS_IDLE;
+        d->sess.first_failing = 0;
+        return;
+    }
+
+    if (d->using_builtin || d->compiler[0] == '\0') {
+        sess_bump_gen(d);   /* discard any in-flight async result */
+        double t0 = now_ms();
+        mock_check(d);
+        d->sess.last_check_ms = now_ms() - t0;
+        return;
+    }
+
+    /* hand the snapshot to the worker; the UI thread returns immediately */
+    int end_line = d->stmts[d->sess.locus - 1].end_line;
+    submit_check(d, CHECK_PREFIX, end_line, NULL);
 }
 
 void sess_advance(Doc *d) {
@@ -686,8 +1047,12 @@ void sess_check_all(Doc *d) {
 }
 
 /* SPEC.md §1d: an edit at line L retracts the locus to the last statement
- * that starts strictly before L, then recovers invisibly (cheap re-check). */
+ * that starts strictly before L, then recovers invisibly (cheap re-check).
+ * The statement table is re-derived first — edits change statement
+ * boundaries and open/close blocks, so a stale table would mis-shade and
+ * mis-report (the builtin linter relies on the `unterminated` flags). */
 void sess_on_edit(Doc *d, int edit_line) {
+    sess_split_statements(d);
     int locus = 0;
     for (int i = 0; i < d->nstmts; i++) {
         if (d->stmts[i].start_line < edit_line) locus = i + 1;
@@ -1064,61 +1429,6 @@ void sess_run_repl(Doc *d) {
     int accepted = (d->sess.status == SESS_FAILED) ? d->sess.first_failing
                                                    : d->sess.locus;
     int end_line = d->stmts[accepted > 0 ? accepted - 1 : 0].end_line;
-
-    char tmppath[2048];
-    temp_path_for(d, tmppath, sizeof tmppath);
-    FILE *f = fopen(tmppath, "wb");
-    if (!f) {
-        snprintf(d->repl_output, sizeof d->repl_output,
-                 "cannot write check file: %s", strerror(errno));
-        return;
-    }
-    Buffer *b = &d->buf;
-    for (int i = 0; i <= end_line && i < b->count; i++) {
-        fwrite(b->lines[i], 1, (size_t)b->lens[i], f);
-        fputc('\n', f);
-    }
-    /* the expression as a print statement in the prefix's scope */
-    fprintf(f, "print(%s)\n", expr);
-    fclose(f);
-
-    const char *argv[] = { d->compiler, "--check", "--json", tmppath, NULL };
-    RunResult res;
-    double t0 = now_ms();
-    run_cmd(argv, CHECK_TIMEOUT_MS, &res);
-    double ms = now_ms() - t0;
-    unlink(tmppath);
-
-    if (res.timed_out) {
-        snprintf(d->repl_output, sizeof d->repl_output,
-                 "emeraldc timed out after %d ms", CHECK_TIMEOUT_MS);
-        return;
-    }
-    if (res.exit_code == 0) {
-        snprintf(d->repl_output, sizeof d->repl_output,
-                 "✓ typechecks in the accepted scope   (%d ms)\n"
-                 "(inferred type shown once emeraldc --env-at lands)",
-                 (int)ms);
-        return;
-    }
-    Diag diags[8];
-    int nd = json_parse_diags(res.out, diags, 8);
-    if (nd == 0) {
-        snprintf(d->repl_output, sizeof d->repl_output,
-                 "check failed (exit %d) with no JSON diagnostics", res.exit_code);
-        return;
-    }
-    /* prefer the last diag (nearest the appended print) */
-    const Diag *g = &diags[nd - 1];
-    size_t n = 0;
-    n += (size_t)snprintf(d->repl_output + n, sizeof d->repl_output - n,
-                          "✗ line %d: %s\n", g->line, g->message);
-    if (g->expected[0])
-        n += (size_t)snprintf(d->repl_output + n, sizeof d->repl_output - n,
-                              "  expected: %s\n", g->expected);
-    if (g->actual[0])
-        n += (size_t)snprintf(d->repl_output + n, sizeof d->repl_output - n,
-                              "  actual:   %s\n", g->actual);
-    n += (size_t)snprintf(d->repl_output + n, sizeof d->repl_output - n,
-                          "  (%d ms)", (int)ms);
+    snprintf(d->repl_output, sizeof d->repl_output, "checking...");
+    submit_check(d, CHECK_REPL, end_line, expr);
 }

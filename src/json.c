@@ -235,6 +235,7 @@ static int j_copy_int(const JVal *v, int def) {
 /* ------------------------------------------------------------------ */
 
 int json_parse_diags(const char *text, Diag *out, int max) {
+    if (!text || !*text) return 0;   /* empty output isn't malformed */
     JParser j = { text, 1 };
     JVal *root = j_parse_value(&j);
     if (root->type != J_ARR) {

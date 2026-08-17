@@ -61,6 +61,7 @@ int main(int argc, char **argv) {
     doc_init(&d, "");
 
     char line[2048];
+    bool was_repl = false;
     while (fgets(line, sizeof line, f)) {
         size_t n = strlen(line);
         while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
@@ -97,13 +98,17 @@ int main(int argc, char **argv) {
         } else if (strncmp(line, "repl ", 5) == 0) {
             snprintf(d.repl_input, sizeof d.repl_input, "%s", line + 5);
             sess_run_repl(&d);
+            was_repl = true;
+        } else {
+            printf("unknown command: %s\n", line);
+            continue;
+        }
+        sess_wait(&d);   /* checks run on the worker thread: settle first */
+        if (was_repl) {
             char out[4096];
             snprintf(out, sizeof out, "%s", d.repl_output);
             sanitize_repl(out);
             printf("  repl: %s\n", out);
-            continue;
-        } else {
-            printf("unknown command: %s\n", line);
             continue;
         }
         sess_derive(&d);
@@ -111,6 +116,7 @@ int main(int argc, char **argv) {
         print_state(&d);
     }
 
+    sess_checker_shutdown();
     doc_free(&d);
     fclose(f);
     return 0;

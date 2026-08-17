@@ -1,0 +1,8 @@
+state locus=2 status=2 first_failing=1 nstmts=2 ndiags=1
+  diag line=4 col=17 code=E_UNTERMINATED msg=unterminated block or string (builtin linter; emeraldc not found)
+  obligations=0
+state locus=1 status=1 first_failing=1 nstmts=2 ndiags=0
+  obligations=0
+state locus=2 status=2 first_failing=1 nstmts=2 ndiags=1
+  diag line=4 col=17 code=E_UNTERMINATED msg=unterminated block or string (builtin linter; emeraldc not found)
+  obligations=0

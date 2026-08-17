@@ -1,0 +1,8 @@
+# multi-module: a local module next to the source (relative import), then a
+# module whose body has a type error — the failure must be attributed to the
+# import, not to an entry-file statement
+open tests/fixtures/multi/main.rald
+checkall
+cursor 2 1
+goto
+open tests/fixtures/multi/main_bad.rald

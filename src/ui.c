@@ -1224,6 +1224,7 @@ int main(int argc, char **argv) {
         handle_dropped(&app);
         handle_mouse(&app);
         handle_keys(&app);
+        sess_poll(&app.doc);   /* apply the newest completed check */
         sess_derive(&app.doc);
         sess_ledger(&app.doc);
         draw(&app);
@@ -1233,6 +1234,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    sess_checker_shutdown();
     doc_free(&app.doc);
     for (int i = 0; i < app.undo_count; i++) buf_free(&app.undo_items[i]);
     for (int i = 0; i < app.redo_count; i++) buf_free(&app.redo_items[i]);
