@@ -14,6 +14,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -24,6 +25,10 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>   /* _NSGetExecutablePath: bundle detection */
+#endif
 
 #define DIAG_MAX 256
 #define CHECK_TIMEOUT_MS 10000
@@ -404,6 +409,34 @@ static bool file_exists(const char *path) {
     return path && path[0] && access(path, X_OK) == 0;
 }
 
+/* When the IDE runs from a macOS .app bundle, the absolute path of the
+ * bundle's Contents/Resources directory (".../Emerald IDE.app/Contents/
+ * Resources"); "" otherwise. Resources — the font, the window icon, the
+ * bundled compiler and its stdlib — are resolved relative to this so the
+ * app works when launched from Finder, whose working directory is "/". */
+const char *bundle_resources(void) {
+#if defined(__APPLE__)
+    static char res[PATH_MAX];
+    static bool done = false;
+    if (!done) {
+        done = true;
+        char exe[PATH_MAX];
+        uint32_t size = sizeof exe;
+        if (_NSGetExecutablePath(exe, &size) == 0) {
+            /* ".../Emerald IDE.app/Contents/MacOS/emerald-ide" */
+            char *p = strstr(exe, "/Contents/MacOS/");
+            if (p) {
+                *p = '\0';
+                snprintf(res, sizeof res, "%s/Contents/Resources", exe);
+            }
+        }
+    }
+    return res;
+#else
+    return "";
+#endif
+}
+
 void doc_resolve_compiler(Doc *d) {
     d->compiler[0] = '\0';
     d->using_builtin = true;
@@ -412,6 +445,23 @@ void doc_resolve_compiler(Doc *d) {
         snprintf(d->compiler, sizeof d->compiler, "%s", env);
         d->using_builtin = false;
         return;
+    }
+    /* compiler bundled inside the .app (Resources/../MacOS/emeraldc); the
+     * stdlib sits in Resources/stdlib, so point $EMERALD_STDLIB at it for
+     * the child compiler process (it would otherwise look for a relative
+     * "stdlib" under the Finder-launched cwd and fail). */
+    const char *res = bundle_resources();
+    if (res[0]) {
+        char cand[PATH_MAX];
+        snprintf(cand, sizeof cand, "%s/../MacOS/emeraldc", res);
+        if (file_exists(cand)) {
+            snprintf(d->compiler, sizeof d->compiler, "%s", cand);
+            d->using_builtin = false;
+            char std[PATH_MAX];
+            snprintf(std, sizeof std, "%s/stdlib", res);
+            setenv("EMERALD_STDLIB", std, 0);
+            return;
+        }
     }
     /* PATH lookup */
     const char *path = getenv("PATH");

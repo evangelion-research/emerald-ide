@@ -9,6 +9,7 @@
 #   task test       run the golden session tests (tests/*.script vs .expected)
 #   task bless      regenerate the golden expectations
 #   task run        build and run (opens the ray-tracer demo by default)
+#   task app        build dist/Emerald IDE.app (self-contained macOS bundle)
 #   task clean      remove build artifacts
 version: "3"
 
@@ -98,7 +99,44 @@ tasks:
     cmds:
       - ./bin/emerald-ide
 
+  # Assemble dist/Emerald IDE.app: the IDE binary plus the compiler and its
+  # stdlib, the JetBrains Mono font, and the NERV window/Find icon. The app
+  # is self-contained; the IDE finds everything relative to the bundle's
+  # Contents/Resources via bundle_resources() in src/session.c.
+  app:
+    desc: Build dist/Emerald IDE.app (self-contained macOS bundle)
+    deps:
+      - build
+    cmds:
+      - |
+        set -e
+        APP="dist/Emerald IDE.app"
+        RES="$APP/Contents/Resources"
+        rm -rf "$APP"
+        mkdir -p "$APP/Contents/MacOS" "$RES/stdlib"
+        cp bin/emerald-ide "$APP/Contents/MacOS/emerald-ide"
+        cp ../emerald/bin/emeraldc "$APP/Contents/MacOS/emeraldc"
+        cp ../emerald/stdlib/*.rald "$RES/stdlib/"
+        cp vendor/fonts/JetBrainsMono-Regular.ttf "$RES/"
+        cp resources/nerv.png "$RES/"
+        # Finder icon: nerv.png -> .icns (all required sizes; 512@2x is an
+        # upscale of the 300px source, fine for a flat logo)
+        ICONSET=/tmp/nerv.iconset
+        rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+        for s in 16 32 128 256 512; do
+          d=$((s*2))
+          sips -z $s $s resources/nerv.png --out "$ICONSET/icon_${s}x${s}.png" > /dev/null
+          sips -z $d $d resources/nerv.png --out "$ICONSET/icon_${s}x${s}@2x.png" > /dev/null
+        done
+        iconutil -c icns "$ICONSET" -o "$RES/nerv.icns"
+        rm -rf "$ICONSET"
+        cp packaging/Info.plist "$APP/Contents/Info.plist"
+        # ad-hoc signature so the bundle launches from Finder without
+        # Gatekeeper complaints (arm64 requires a valid signature)
+        codesign --force --deep --sign - "$APP" 2>/dev/null || true
+        echo "built $APP"
+
   clean:
     desc: Remove build artifacts
     cmds:
-      - rm -rf bin vendor/raylib/src/*.o vendor/raylib/src/libraylib.a
+      - rm -rf bin dist vendor/raylib/src/*.o vendor/raylib/src/libraylib.a

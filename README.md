@@ -66,15 +66,34 @@ task run          # builds bin/emerald-ide, opens the ray-tracer demo
 ./bin/emerald-ide path/to/file.rald
 task test         # golden session tests (headless driver vs tests/*.expected)
 task bless        # regenerate the golden expectations
+task app          # build dist/Emerald IDE.app (self-contained macOS bundle)
 ```
 
-The `emeraldc` binary is resolved at startup from `$EMERALDC`, then `$PATH`,
-then `../emerald/bin/emeraldc` (the sibling checkout of the compiler). The
-status bar shows which one is in use; without any of them the IDE falls back
-to its built-in linter.
+The `emeraldc` binary is resolved at startup from `$EMERALDC`, then the one
+bundled inside the `.app` (when running from the bundle), then `$PATH`, then
+`../emerald/bin/emeraldc` (the sibling checkout of the compiler). The status
+bar shows which one is in use; without any of them the IDE falls back to its
+built-in linter.
 
 The window icon is `resources/nerv.png` (loaded at startup; the app still
 runs if it is missing).
+
+## macOS app bundle
+
+`task app` assembles a self-contained `dist/Emerald IDE.app` — the IDE plus
+its own copy of `emeraldc`, the Emerald stdlib, the JetBrains Mono font, and
+the NERV icon — so the app works from Finder without a checkout of either
+repo. The binary finds everything relative to the bundle (`Contents/Resources`
+and `Contents/MacOS/emeraldc`) no matter what the working directory is, and
+the bundled stdlib is pointed at via `$EMERALD_STDLIB` when the bundled
+compiler is used. The bundle is ad-hoc codesigned (`codesign -s -`) and its
+`.icns` is generated from `resources/nerv.png`.
+
+```sh
+task app
+open "dist/Emerald IDE.app"              # or double-click in Finder
+open -a "Emerald IDE" /path/to/file.rald  # open a file with it
+```
 
 Two env vars are handy for smoke-testing: `EMERALD_IDE_SHOT=<path>` takes a
 screenshot after 30 frames and exits, and `EMERALD_IDE_TAB=0|1|2` selects the
@@ -91,7 +110,9 @@ src/session.c  statement splitter, locus state machine, emeraldc runner,
 src/ui.c       raygui front end (window, panels, input, main)
 headless/      scripted session driver (task headless)
 tests/         golden session scripts (.script) + expectations (.expected)
+packaging/     Info.plist template for the .app bundle
 vendor/        raylib 6.0, raygui v5.0, JetBrains Mono (see vendor/README.md)
+dist/          task app output: Emerald IDE.app (gitignored)
 ```
 
 `src/buffer.c`, `src/json.c` and `src/session.c` are pure C11 with no GUI

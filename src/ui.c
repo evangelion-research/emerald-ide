@@ -18,6 +18,7 @@
 #include "ide.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -120,7 +121,13 @@ static Font ide_font_load(void) {
     };
     for (size_t i = 0; i < sizeof extra / sizeof extra[0] && n < 512; i++)
         cps[n++] = extra[i];
-    Font f = LoadFontEx("vendor/fonts/JetBrainsMono-Regular.ttf", 16, cps, n);
+    const char *res = bundle_resources();
+    char fontpath[PATH_MAX];
+    if (res[0])
+        snprintf(fontpath, sizeof fontpath, "%s/JetBrainsMono-Regular.ttf", res);
+    else
+        snprintf(fontpath, sizeof fontpath, "vendor/fonts/JetBrainsMono-Regular.ttf");
+    Font f = LoadFontEx(fontpath, 16, cps, n);
     if (f.glyphCount == 0) return GetFontDefault();
     return f;
 }
@@ -1193,7 +1200,13 @@ int main(int argc, char **argv) {
     /* window icon (resources/nerv.png; ignored if missing).
      * GLFW warns that regular macOS windows have no icon (it applies to
      * bundled .app bundles instead); suppress just that message. */
-    Image icon = LoadImage("resources/nerv.png");
+    const char *bres = bundle_resources();
+    char iconpath[PATH_MAX];
+    if (bres[0])
+        snprintf(iconpath, sizeof iconpath, "%s/nerv.png", bres);
+    else
+        snprintf(iconpath, sizeof iconpath, "resources/nerv.png");
+    Image icon = LoadImage(iconpath);
     if (icon.data) {
         ImageFormat(&icon, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
         SetTraceLogLevel(LOG_ERROR);

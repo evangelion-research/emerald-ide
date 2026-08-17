@@ -144,6 +144,9 @@ void doc_new(Doc *d);                              /* blank unsaved doc */
 bool doc_open(Doc *d, const char *path, char *err, size_t errcap);
 bool doc_save(Doc *d, const char *path, char *err, size_t errcap);
 void doc_resolve_compiler(Doc *d);
+/* Absolute path of the macOS .app bundle's Contents/Resources, "" when not
+ * running from a bundle (dev builds, headless driver). */
+const char *bundle_resources(void);
 
 /* session operations */
 void sess_split_statements(Doc *d);
