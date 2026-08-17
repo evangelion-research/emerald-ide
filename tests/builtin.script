@@ -1,0 +1,4 @@
+# Builtin linter mode: no emeraldc anywhere (env -i, cwd outside the repo).
+# The IDE must stay usable; only structural errors are caught (SPEC.md §14).
+open /Users/sagnikc/evangelion-research/emerald/tests/check/bad_annot.rald
+checkall

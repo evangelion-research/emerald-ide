@@ -1,0 +1,10 @@
+# Session script: the ray-tracer entry module (SPEC.md §1)
+open ../emerald/examples/ray_tracer/typed/main.rald
+cursor 1 1
+retract
+advance
+cursor 12 1
+goto
+cursor 1 1
+checkall
+repl 1 + 1

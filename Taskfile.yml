@@ -1,0 +1,38 @@
+# Emerald IDE tasks, mirroring ../emerald's Taskfile.yml conventions.
+version: "3"
+
+tasks:
+  default:
+    desc: Build bin/emerald-ide
+    cmds:
+      - make
+
+  build:
+    desc: Build bin/emerald-ide
+    cmds:
+      - make
+
+  headless:
+    desc: Build the scripted session driver (no GUI needed)
+    cmds:
+      - make headless
+
+  test:
+    desc: Run the golden session tests
+    cmds:
+      - make test
+
+  bless:
+    desc: Regenerate golden expectations
+    cmds:
+      - make bless
+
+  run:
+    desc: Build and run the IDE
+    cmds:
+      - make run
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - make clean

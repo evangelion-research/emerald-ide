@@ -1,0 +1,33 @@
+state locus=5 status=2 first_failing=0 nstmts=5 ndiags=5
+  diag line=1 col=1 code=E_TYPE_ASSIGN msg=cannot assign "hello" to 'n' declared as int
+  diag line=2 col=4 code=E_TYPE_UNKNOWN_TYPE msg=unknown type 'unknown_type'
+  diag line=3 col=1 code=E_TYPE_ASSIGN msg=cannot assign list[1 | "two"] to 'xs' declared as list[int]
+  diag line=5 col=1 code=E_TYPE_RETURN msg='return' outside of a function
+  diag line=4 col=18 code=E_TYPE_RETURN msg=returning 3 from a function declared to return str
+  obligations=0
+state locus=4 status=0 first_failing=5 nstmts=5 ndiags=0
+  obligations=0
+state locus=5 status=2 first_failing=0 nstmts=5 ndiags=5
+  diag line=1 col=1 code=E_TYPE_ASSIGN msg=cannot assign "hello" to 'n' declared as int
+  diag line=2 col=4 code=E_TYPE_UNKNOWN_TYPE msg=unknown type 'unknown_type'
+  diag line=3 col=1 code=E_TYPE_ASSIGN msg=cannot assign list[1 | "two"] to 'xs' declared as list[int]
+  diag line=5 col=1 code=E_TYPE_RETURN msg='return' outside of a function
+  diag line=4 col=18 code=E_TYPE_RETURN msg=returning 3 from a function declared to return str
+  obligations=0
+state locus=5 status=2 first_failing=0 nstmts=5 ndiags=5
+  diag line=1 col=1 code=E_TYPE_ASSIGN msg=cannot assign "hello" to 'n' declared as int
+  diag line=2 col=4 code=E_TYPE_UNKNOWN_TYPE msg=unknown type 'unknown_type'
+  diag line=3 col=1 code=E_TYPE_ASSIGN msg=cannot assign list[1 | "two"] to 'xs' declared as list[int]
+  diag line=5 col=1 code=E_TYPE_RETURN msg='return' outside of a function
+  diag line=4 col=18 code=E_TYPE_RETURN msg=returning 3 from a function declared to return str
+  obligations=0
+state locus=1 status=2 first_failing=0 nstmts=5 ndiags=1
+  diag line=1 col=1 code=E_TYPE_ASSIGN msg=cannot assign "hello" to 'n' declared as int
+  obligations=0
+state locus=5 status=2 first_failing=0 nstmts=5 ndiags=5
+  diag line=1 col=1 code=E_TYPE_ASSIGN msg=cannot assign "hello" to 'n' declared as int
+  diag line=2 col=13 code=E_TYPE_UNKNOWN_TYPE msg=unknown type 'unknown_type'
+  diag line=3 col=1 code=E_TYPE_ASSIGN msg=cannot assign list[1 | "two"] to 'xs' declared as list[int]
+  diag line=5 col=1 code=E_TYPE_RETURN msg='return' outside of a function
+  diag line=4 col=18 code=E_TYPE_RETURN msg=returning 3 from a function declared to return str
+  obligations=0
