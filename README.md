@@ -1,42 +1,36 @@
 # Emerald IDE
 
-A working, basic IDE for the Emerald language, built with **raylib 6.0** and
-**raygui v5.0**, implementing the interaction model in
-[`SPEC.md`](SPEC.md): a source buffer with an *accepted prefix*, a goal
-panel, an obligation ledger, and a type-checking REPL.
-
-This is the cimgui-style prototype step of the spec's suggested order —
-built on raygui instead of Dear ImGui — with the real compiler doing the
-checking.
+A working, basic IDE for the Emerald language, built as a **pure Tauri app**
+(Rust backend + TypeScript/Vite webview frontend), implementing the
+interaction model in [`SPEC.md`](SPEC.md): a source buffer with an *accepted
+prefix*, a goal panel, an obligation ledger, and a type-checking REPL.
 
 ![emerald-ide](./public/emerald-ide.png)
 
 ## What it does
 
-- **Edit `.rald` files.** Open (drag-drop, ⌘O, or the Open button), save
-  (⌘S), new (⌘N). Line numbers, gutter, syntax coloring (keywords, strings,
-  comments, numbers), selection, copy/paste, undo/redo, UTF-8 aware.
+- **Edit `.rald` files.** Open (⌘O or the Open dialog), save (⌘S),
+  save-as (⇧⌘S), new (⌘N). Line numbers, gutter, syntax highlighting via a
+  vendored tree-sitter grammar for Emerald, selection, undo/redo, UTF-8 aware.
 - **Prefix checking with a visible locus.** Statements are the unit of
   advance (`def`, `type`, `import`, assignments, …). The accepted prefix is
-  shaded green, the failing statement red, the in-flight region amber, and a
-  `►` gutter marker shows the locus — CoqIDE-style, but the buffer stays
-  editable: editing anywhere retracts the locus to the last statement before
-  the edit and re-checks invisibly (SPEC.md §1d).
+  shaded green, the failing statement red, and the in-flight region amber —
+  CoqIDE-style, but the buffer stays editable: editing anywhere retracts the
+  locus to the last statement before the edit and re-checks invisibly.
 - **Drives the real compiler.** Every check runs
   `emeraldc --check --json` over the truncated prefix (materialised as a
   temp file next to your source, so relative imports resolve identically)
   and parses the structured diagnostics. `emeraldc` is found via `$EMERALDC`,
-  `$PATH`, or the sibling `../emerald/bin/emeraldc`. If it is missing, a tiny
-  built-in linter keeps the editor usable instead.
-- **Goal panel.** The residual goal (the failing diagnostic's
+  `$PATH`, the bundled copy inside the `.app`, or the sibling
+  `../emerald/bin/emeraldc`.
+- **Goal panel & symbols.** The residual goal (the failing diagnostic's
   expected/actual) plus a source-derived environment of the accepted prefix:
   function signatures, type aliases, and annotated bindings.
 - **Obligation ledger.** `impossible: never =` bindings and `-> never`
   functions are detected and given a verdict — *proved*, *out of reach*, or
   *unchecked* — with a live summary line.
 - **REPL.** Type an expression; it is type-checked in the scope of the
-  accepted prefix via `emeraldc --check`. (The inferred type will appear
-  once the compiler grows `--env-at`, SPEC.md §2b.)
+  accepted prefix via `emeraldc --check`.
 
 ## Keybindings
 
@@ -47,93 +41,49 @@ checking.
 | goto cursor | ⌘→ |
 | check all | ⌘⏎ |
 | interrupt (drop diagnostics) | ⌘. |
-| panels: diagnostics / ledger / repl | ⌘1 / ⌘2 / ⌘3 |
-| toggle goal panel | ⌘G |
+| panels: goal / symbols / ledger / diagnostics / repl | ⌘1 – ⌘5 |
+| cycle panel | ⌘[ / ⌘] |
 | open / save / save-as / new | ⌘O / ⌘S / ⇧⌘S / ⌘N |
 | undo / redo | ⌘Z / ⇧⌘Z |
-| cut / copy / paste / select all | ⌘X / ⌘C / ⌘V / ⌘A |
-| quit | ⌘Q |
 
-The toolbar also exposes prefix controls for mouse users (◀ ▶ Goto Check all).
+The toolbar also exposes prefix controls for mouse users (◀ ▶ Goto Run).
 
 ## Build and run
 
-Requires macOS with Xcode command-line tools and [go-task](https://taskfile.dev)
-(`brew install go-task`). raylib 6.0, raygui, and the JetBrains Mono font are
-vendored under `vendor/`; no other build system or Homebrew package is needed
-— `task` compiles raylib itself into `vendor/raylib/src/libraylib.a`.
+Requires [Node.js](https://nodejs.org), [Rust](https://rustup.rs), and the
+platform webview prerequisites (on macOS: Xcode command-line tools).
 
 ```sh
-task run          # builds bin/emerald-ide, opens the ray-tracer demo
-./bin/emerald-ide path/to/file.rald
-task test         # golden session tests (headless driver vs tests/*.expected)
-task bless        # regenerate the golden expectations
-task app          # build dist/Emerald IDE.app (self-contained macOS bundle)
+npm install
+npm run tauri dev     # dev app with hot reload
+npm run tauri build   # release bundle (.app / .dmg)
 ```
 
-The `emeraldc` binary is resolved at startup from `$EMERALDC`, then the one
-bundled inside the `.app` (when running from the bundle), then `$PATH`, then
-`../emerald/bin/emeraldc` (the sibling checkout of the compiler). The status
-bar shows which one is in use; without any of them the IDE falls back to its
-built-in linter.
+The frontend builds with Vite (`npm run build`) into `dist/`, which Tauri
+packages (`src-tauri/tauri.conf.json`). The tree-sitter grammar for Emerald is
+vendored under `src-tauri/grammar/` and compiled into the binary by
+`src-tauri/build.rs`.
 
-The window icon is `resources/nerv.png` (loaded at startup; the app still
-runs if it is missing).
+## Compiler resolution
 
-## macOS app bundle
-
-`task app` assembles a self-contained `dist/Emerald IDE.app` — the IDE plus
-its own copy of `emeraldc`, the Emerald stdlib, the JetBrains Mono font, and
-the NERV icon — so the app works from Finder without a checkout of either
-repo. The binary finds everything relative to the bundle (`Contents/Resources`
-and `Contents/MacOS/emeraldc`) no matter what the working directory is, and
-the bundled stdlib is pointed at via `$EMERALD_STDLIB` when the bundled
-compiler is used. The bundle is ad-hoc codesigned (`codesign -s -`) and its
-`.icns` is generated from `resources/nerv.png`.
-
-```sh
-task app
-open "dist/Emerald IDE.app"              # or double-click in Finder
-open -a "Emerald IDE" /path/to/file.rald  # open a file with it
-```
-
-Three env vars are handy for smoke-testing: `EMERALD_IDE_SHOT=<path>` takes a
-screenshot after 30 frames and exits, `EMERALD_IDE_TAB=0|1|2` selects the
-initial bottom tab, and `EMERALD_IDE_CHECK_TIMEOUT_MS=<ms>` shrinks the
-compiler timeout (used by the golden tests to exercise the timeout path).
-
-The golden suite (`task test`) now covers stdlib imports, multi-module
-resolution (a local module next to the source), and subprocess failures
-(exec failure falling back to the built-in linter, non-JSON output, and a
-hanging compiler).
+`emeraldc` is resolved at startup from `$EMERALDC`, then the one bundled
+inside the `.app` (which also points `$EMERALD_STDLIB` at the bundled stdlib),
+then `$PATH`, then `../emerald/bin/emeraldc` (the sibling checkout of the
+compiler). The status bar shows which one is in use.
 
 ## Layout
 
 ```
-src/ide.h      core types + API
-src/buffer.c   line-array text buffer, UTF-8 helpers
-src/json.c     minimal JSON parser for --check --json output
-src/session.c  statement splitter, locus state machine, emeraldc runner,
-               built-in linter, goal env, obligation ledger, REPL
-src/ui.c       raygui front end (window, panels, input, main)
-headless/      scripted session driver (task headless)
-tests/         golden session scripts (.script) + expectations (.expected)
-packaging/     Info.plist template for the .app bundle
-vendor/        raylib 6.0, raygui v5.0, JetBrains Mono (see vendor/README.md)
-dist/          task app output: Emerald IDE.app (gitignored)
+index.html           webview shell (titlebar, editor layers, rail, statusbar)
+src/main.ts          app wiring: toolbar, keybindings, file dialogs
+src/editor.ts        layered code editor over a textarea (gutter, regions)
+src/session.ts       proof-session state machine (advance/retract/goto/check)
+src/ipc.ts           typed wrappers around the Tauri commands
+src/panels.ts        goal / symbols / ledger / diagnostics / REPL rail
+src/theme.ts         theme registry + picker
+src/styles/          base.css, themes.css
+src-tauri/src/lib.rs Tauri commands: analyze, check, read/write file,
+                     compiler discovery, subprocess runner
+src-tauri/src/emerald.rs  tree-sitter analysis (tokens, statements, symbols)
+src-tauri/grammar/   vendored tree-sitter grammar for Emerald
 ```
-
-`src/buffer.c`, `src/json.c` and `src/session.c` are pure C11 with no GUI
-dependency, per SPEC.md §4 (`core/` never includes a UI header). The spec's
-`headless/` session driver and golden tests are the natural next step.
-
-## Limitations (all inherited from the spec's own open questions)
-
-- The goal panel is derived from source text, not from a compiler env dump:
-  `--env-at` (SPEC.md §2b) does not exist in the compiler yet, so inferred
-  types and narrowing reasons are not shown.
-- The ledger detects the two structural proof forms (`never` bindings and
-  negation functions); the spec's declared-proposition forms need a
-  language change (SPEC.md §8a).
-- Checks are synchronous with a 10 s timeout (the largest example checks in
-  ~4 ms), not a worker thread; a hung compiler is killed and reported.

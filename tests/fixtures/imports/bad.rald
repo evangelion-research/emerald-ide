@@ -1,6 +1,0 @@
-# imports/bad.rald — a missing module must fail the check at the import
-from lists import push
-from missing_module import whatever
-
-xs = []
-push(xs, 1)

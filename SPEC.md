@@ -1,17 +1,19 @@
 # Emerald IDE — spec
 
-A native macOS IDE for Emerald in the shape of CoqIDE / Proof General / DrRacket:
+A desktop IDE for Emerald in the shape of CoqIDE / Proof General / DrRacket:
 a source buffer with an *accepted prefix*, a goal panel, and an obligation
 ledger, driven by `emeraldc` and (later) `emerald-lsp`.
 
-Written before any code exists, and deliberately parked until the core language
-evolves. Read [`../emerald/README.md`](../emerald/README.md),
+Written before any code existed; §6 has since been resolved — the IDE is
+implemented as a **pure Tauri app** (Rust backend, webview frontend), with no
+native C toolkit anywhere in the tree. Read [`../emerald/README.md`](../emerald/README.md),
 [`../emerald/docs/proofs.md`](../emerald/docs/proofs.md), and
 [`../emerald-lsp/DESIGN.md`](../emerald-lsp/DESIGN.md) first — this document
 assumes all three and does not repeat them.
 
 The headline, mirroring the LSP notes: **most of the work is in the compiler,
-not the IDE.** The editor shell is a few thousand lines of ordinary C. The
+not the IDE.** The editor shell is a thin webview frontend over a small Rust
+core. The
 thing that makes it an IDE *for a proof assistant* — prefix checking, a
 readable type environment at a point, a machine-readable account of which
 propositions hold — does not exist yet and all of it lives in
@@ -245,7 +247,7 @@ position → statement index without parsing Emerald itself. Fold it into
 Three processes, two channels:
 
 ```
-  emerald-ide (C)
+  emerald-ide (Tauri: webview frontend + Rust core)
       │
       ├─ LSP / JSON-RPC over stdio ──► emerald-lsp (Python) ──► emeraldc --lsp-*
       │     hover, completion, goto-def, references, semantic tokens
@@ -280,133 +282,97 @@ guess a workspace `main`.
 
 ### 3c. Subprocess, not a library
 
-Start with `posix_spawn` + pipes, one process per query, same reasoning as
-DESIGN.md §3: leaks don't matter, crashes are contained, every query is a
-pasteable command, everything is golden-testable.
+Start with `std::process::Command` + pipes, one process per query, same
+reasoning as DESIGN.md §3: leaks don't matter, crashes are contained, every
+query is a pasteable command, everything is golden-testable.
 
 If profiling ever demands it, the escape hatch is `libemerald.a` linked
-directly into the IDE — the JSON contract is unchanged, so it swaps one
-function. This is *more* tempting here than in the LSP (the IDE is already C,
-so there is no FFI to write) and should still be resisted until measured,
-because in-process linking re-imports every problem in DESIGN.md §1c and §1d:
+directly into the Rust binary — the JSON contract is unchanged, so it swaps one
+function. This is *more* tempting here than in the LSP and should still be
+resisted until measured, because in-process linking re-imports every problem in
+DESIGN.md §1c and §1d:
 the arena allocator, `exit(1)` on OOM, and stderr as a reporting channel would
-all become the IDE's problem on day one.
+all become the IDE's problem on day one — plus an FFI layer to write and
+maintain.
 
 ---
 
-## 4. Code layout: make the GUI toolkit a reversible decision
+## 4. Code layout: keep the session core behind a command boundary
 
-The choice of GUI toolkit is the decision most likely to sink this project, so
-structure the code so that changing it costs a week rather than a rewrite.
+The toolkit decision is made (§6: Tauri), and the layout keeps it reversible
+the same way the original `core/`/`ui/` split meant to: all session logic
+lives where no DOM or webview API can reach it.
 
 ```
-  core/     pure C11, zero UI dependencies
-    buffer.c      gap buffer + line index
-    doc.c         document set, dirty tracking, canonical paths
-    session.c     the §1b state machine
-    proc.c        subprocess spawn, pipe pumping, cancellation
-    json.c        vendored yyjson or cJSON
-    proto.c       compiler JSON → structs; LSP JSON-RPC client
-    ledger.c      obligation ledger model
-    pos.c         byte ↔ UTF-8 ↔ UTF-16 column conversion (one place, always)
+  src/            webview frontend (TypeScript + Vite)
+    editor.ts       layered <textarea> code editor (gutter, regions, undo)
+    session.ts      the §1b state machine (locus, generation, debounced checks)
+    ipc.ts          typed wrappers around the Tauri commands
+    panels.ts       goal / symbols / ledger / diagnostics / repl rail
+    theme.ts        theme registry + picker
 
-  ui/       one backend, implementing a small surface
-    ui.h          ~15 functions the core calls
-    ui_gtk.c      (or ui_appkit.m, or ui_sdl.c)
+  src-tauri/      backend (Rust)
+    src/lib.rs      commands: analyze, check, read/write file; compiler
+                    discovery; subprocess runner with timeout
+    src/emerald.rs  tree-sitter analysis of the buffer (statements,
+                    symbols, tokens) for highlighting and the outline
+    grammar/        vendored tree-sitter grammar for Emerald
+    tauri.conf.json window + bundler config (.app/.dmg)
 
-  headless/ a driver binary that runs a scripted session and prints results
-  tests/    golden tests, directory-per-case, mirroring ../emerald/tests
+  index.html      webview shell: titlebar, editor layers, rail, statusbar
 ```
 
-The rule: **`core/` never includes a UI header, and `ui/` never spawns a
-process.** If that holds, the headless driver can exercise every interesting
-behaviour without a window, which is where the test coverage will live.
+The rule: **`src/session.ts` never spawns a process and never touches the
+DOM; `src-tauri/src/lib.rs` never imports webview state.** Everything crosses
+one typed command boundary (`ipc.ts` ↔ `#[tauri::command]`), so the frontend
+could be replaced wholesale without touching the proof channel, and the
+backend's behaviour is exercisable without a window via `cargo test`.
 
-Match `../emerald`'s conventions: `Taskfile.yml`, `-std=c11 -Wall -Wextra -O2
--g`, a `bless` task, golden `.expected` files, and a `docs/` that starts at
-`docs/README.md`.
+Build tooling follows Node/Rust conventions rather than `../emerald`'s
+Taskfile: npm + Vite for the frontend (`npm run dev`, `npm run build`),
+cargo for the backend, and `npm run tauri dev` / `npm run tauri build` to run
+and bundle the app.
 
 ---
 
 ## 5. Text buffer and document model
 
-- **Gap buffer, not a rope.** These are `.rald` source files, not 100MB logs. A
-  gap buffer is ~200 lines and will never hit its limits here. A rope is the
-  correct answer to a problem this project does not have.
-- **A separate line-start index**, rebuilt on edit. Every position query the
-  compiler protocol makes needs it, and it is cheap at these sizes.
-- **UTF-16 column math lives in exactly one function**, next to the line index,
-  and is used at every LSP boundary and nowhere else. DESIGN.md §5 calls this
-  *the trap*; it is the same trap here. The compiler speaks 1-based lines and
-  byte columns; LSP speaks 0-based lines and UTF-16 code units; the buffer
-  speaks byte offsets. Three coordinate systems, one converter, tested with
-  emoji and combining characters from the first commit.
-- **Undo:** a flat list of inverse edits with coalescing by time and adjacency.
-  Do not attempt a persistent/branching undo tree.
+As built: a transparent `<textarea>` holds the text and owns input/selection/
+IME; rendering layers underneath draw highlighting, prefix shading, and
+diagnostic underlines. Consequences:
+
+- **No gap buffer to write or maintain.** The browser's textarea is the
+  buffer; `session.ts` treats it as a string plus a byte offset. At `.rald`
+  sizes this is free performance nobody has to think about again.
+- **Statement ranges come from tree-sitter** (`src-tauri/src/emerald.rs`), not
+  a hand-rolled line index: the backend returns statement/symbol spans, the
+  frontend maps caret ↔ statement through them.
+- **UTF-16 ↔ byte conversion lives in exactly one place** (`editor.ts`'s
+  caret mapping), because the DOM speaks UTF-16 code units while emeraldc
+  speaks 1-based lines and byte columns. Three coordinate systems, one
+  converter, tested with emoji and combining characters from the first commit.
+- **Undo:** a flat list of inverse edits in `editor.ts` with coalescing by
+  time and adjacency. Do not attempt a persistent/branching undo tree.
 - **File watching:** the IDE must notice on-disk changes to files it has open
-  and to imported modules it does not. On macOS this is FSEvents (a C API), or
-  a 1s `stat` poll over the loaded module set, which is honestly adequate and
-  ~30 lines. Start with the poll.
+  and to imported modules it does not — FSEvents via a Rust crate, or a 1s
+  `stat` poll over the loaded module set, which is honestly adequate and
+  ~30 lines. Not implemented yet; start with the poll.
 
 ---
 
 ## 6. GUI toolkit
 
-Ranked, with costs stated plainly. All of these are viable; none is obviously
-right.
+The original spec ranked GTK4 + GtkSourceView, AppKit + Scintilla, SDL3 +
+CoreText, and a cimgui prototype, all C or Objective-C.
 
-### 1. GTK4 + GtkSourceView — *fastest path to daily use*
-
-Pure C API. GtkSourceView supplies syntax highlighting from an XML language
-spec, line numbers, undo, folding, search, and gutter marks. Critically,
-`GtkTextTag` gives background-shaded regions directly, which is exactly the
-accepted-prefix rendering, and `GtkSourceMark` gives the gutter icons.
-
-- **Pro:** the widget layer is already an IDE; you write the parts that are
-  about Emerald.
-- **Con:** it does not look or feel native on macOS (menus, scrolling, IME,
-  emoji picker), Homebrew GTK4 on macOS is periodically broken, and shipping a
-  `.app` means bundling a large dependency tree.
-
-### 2. AppKit + Scintilla — *best long-term feel on macOS*
-
-`ScintillaView` embedded in a native window. Scintilla's API is C-callable;
-indicators, markers, and styling were designed for precisely this use.
-
-- **Pro:** native menus, native text input, native scrolling; a real macOS app.
-  Scintilla is battle-tested in this exact role.
-- **Con:** the shell must be Objective-C. Driving the ObjC runtime from `.c` via
-  `objc_msgSend` is possible and gets miserable past ~200 lines — just write
-  `ui_appkit.m` and keep `core/` in C. Scintilla is C++ internally, so the
-  build grows a C++ toolchain.
-
-### 3. SDL3 + CoreText + a hand-written editor widget — *total control*
-
-CoreText is a C API and does real shaping; SDL3 supplies the window and Metal
-surface.
-
-- **Pro:** complete control over locus rendering, gutter, and the goal panel's
-  typography. No toolkit fighting you.
-- **Con:** you are now implementing selection, IME, clipboard, scrolling,
-  accessibility, and undo yourself. Only justified if the editor itself is a
-  research artifact rather than a tool.
-
-### 4. cimgui (Dear ImGui) — *prototype only*
-
-Excellent for the side panels — ledger, diagnostics, environment inspector are
-all immediate-mode-shaped. Poor for the main buffer.
-
-- **Verdict:** viable as a week-one prototype to validate the protocol and the
-  interaction model with a throwaway UI. Do not ship on it.
-
-### Recommendation
-
-**GTK4 if the goal is "usable within a month"; AppKit + Scintilla if the goal
-is "comfortable on macOS for years."** Given that this project is explicitly
-being parked until the language evolves, and that the value is in §2 (compiler
-work) rather than the shell, the sequencing that dominates is: build `core/` and
-`headless/` first, prototype the UI in cimgui to feel out the interaction, then
-choose between GTK4 and AppKit with actual experience of what the panels need.
+**Decision: none of the above — Tauri 2 (Rust core + system webview).** The
+interaction model turned out to be layers of styled DOM over a textarea,
+which a webview gives you for free: selection, IME, clipboard, scrolling,
+accessibility, and undo are platform code you don't write. The Rust side
+supplies tree-sitter for highlighting and statement ranges, plus the
+subprocess runner for the proof channel. No C toolkit is compiled, vendored,
+or maintained; the whole UI is portable across desktop platforms that Tauri
+supports.
 
 ---
 
@@ -493,40 +459,40 @@ to `Print Assumptions` that Emerald can support.
 
 ## 9. The interaction pane (REPL)
 
-Emerald compiles to C and links a native binary; there is no interpreter. So a
-REPL means: take the accepted prefix, append the typed expression as a
-`print(...)` statement, run `emeraldc --emit-c` plus `cc`, execute, capture
-stdout.
+As built: take the accepted prefix, append the typed expression, and re-run
+`emeraldc --check` over the extension (`check`'s `suffix` parameter). Errors
+come back as ordinary structured diagnostics; a clean check means the
+expression typechecks in scope.
 
-- Round trip is on the order of 100ms, dominated by `cc`. That is fine for a
-  scratch pane and unacceptable for anything on the typing path — so the REPL is
-  explicitly *not* a live evaluation feature.
-- **Show the inferred type, always, above the value.** In a language whose whole
-  claim is about type systems, the type is the interesting output. This is the
-  one respect in which this REPL beats DrRacket's.
-- Errors come back as ordinary structured diagnostics and render identically to
-  buffer diagnostics.
+- **Show the inferred type, always.** In a language whose whole claim is about
+  type systems, the type is the interesting output. Until `--env-at` exists
+  (§2b) the pane reports accept/fail only; the moment the compiler can dump
+  the expression's type, this becomes the one respect in which this REPL beats
+  DrRacket's.
+- Emerald compiles to C and links a native binary; there is no interpreter, so
+  *evaluating* an entry means `emeraldc --emit-c` plus `cc`, on the order of
+  100ms dominated by `cc`. Fine for a scratch pane, unacceptable on the typing
+  path — so the REPL is explicitly *not* live evaluation, and execution is a
+  later addition behind the same command boundary.
 - Requires the accepted prefix to be a valid program; if `status != IDLE` the
   pane is disabled rather than silently using stale scope.
-
-A `--emit-c`-only mode (skip `cc`, skip running) is worth a toggle: for
-type-level experimentation, the answer is the type, and paying for a C compile
-is pointless.
 
 ---
 
 ## 10. Concurrency and cancellation
 
-- **The UI thread never blocks on a subprocess.** One worker thread, one request
-  queue, results posted back to the UI thread.
+- **The UI thread never blocks on a subprocess.** The proof channel runs as
+  async Tauri commands, so the webview keeps painting while `emeraldc` works.
 - **Cancellation by generation counter.** Every request carries the generation
-  it was issued under; a reply whose generation is stale is discarded. ~50
+  it was issued under (`session.ts`); a reply whose generation is stale is
+  discarded. ~50
   lines, and it is a complete cancellation story without any protocol support.
   The LSP's `$/cancelRequest` can be wired later for politeness; it changes
   nothing about correctness.
-- **Coalesce.** Rapid advance keypresses should collapse to one check at the
-  final locus. Same for retract.
-- **Kill in-flight work on interrupt** — `SIGKILL` the child and reap it. The
+- **Coalesce.** Rapid advance keypresses collapse to one check at the final
+  locus via the debounce in `session.ts`. Same for retract.
+- **Kill in-flight work on timeout or interrupt** — kill the child and reap it
+  (`run_with_timeout`). The
   compiler holds no state the IDE cares about, so there is nothing to clean up.
 - **One in-flight proof query at a time.** Do not build a pipeline; there is
   nothing to overlap.
@@ -564,24 +530,28 @@ Follow Proof General's muscle memory, since that is the audience:
 | goto cursor | `⌘→` |
 | check all | `⌘⏎` |
 | interrupt | `⌘.` |
-| toggle panel | `⌘1/2/3` |
+| panels: goal / symbols / ledger / diagnostics / repl | `⌘1–⌘5` |
+| cycle panel | `⌘[` / `⌘]` |
 
-Everything else is standard macOS text editing, which is an argument for §6
-option 2.
+Everything else is standard macOS text editing, which the webview textarea
+provides for free.
 
 ---
 
 ## 13. Build and packaging
 
-- `Taskfile.yml`, matching `../emerald`: `task` builds, `task test` runs the
-  golden suites, `task bless` regenerates expectations.
-- `core/` and `headless/` must build and test with **no GUI dependency
-  installed at all**. This is the property that keeps CI simple and the toolkit
-  decision reversible.
-- Shipping a `.app` bundle with a bundled `emeraldc` is a later problem. Until
-  then, resolve `emeraldc` from `$PATH` with an override in settings.
-- No installer, no auto-update, no signing until someone other than the author
-  runs it.
+- npm + Vite build the frontend; cargo builds the backend;
+  `npm run tauri dev` / `npm run tauri build` run and bundle the app.
+  `tauri.conf.json` is the single bundler config (`.app` / `.dmg` targets).
+- The session core is testable with **no window at all** (`cargo test` in
+  `src-tauri`, plus frontend tests if added). This is the property that keeps
+  CI simple.
+- The `.app` bundle can carry its own `emeraldc` and the Emerald stdlib in
+  `Contents/`; the resolver prefers it when present, then falls back to
+  `$EMERALDC`, `$PATH`, or the sibling checkout. Tauri's bundler handles
+  icons, signing, and the DMG.
+- No installer, no auto-update beyond what the bundler emits until someone
+  other than the author runs it.
 
 ---
 
@@ -589,16 +559,16 @@ option 2.
 
 Extend `../emerald`'s golden-test culture rather than inventing anything.
 
-- **Session goldens.** `headless/` reads a script (`open f.rald`, `advance ×3`,
-  `edit 12:1 "foo"`, `retract`, …) and prints the session state after each step.
-  Diff against a checked-in `.expected`. Directory-per-case, `flags` file,
-  `bad_*` prefix for expected failures — copy the `imports` suite's shape,
-  since multi-module scenarios matter here too.
-- **Buffer property tests.** Random edit sequences against a naive
-  string-rebuild reference implementation, asserting the gap buffer and line
-  index agree. This catches essentially every buffer bug and is ~50 lines.
+- **Session state machine tests.** The locus/generation/retraction logic in
+  `session.ts` is pure given an injected fake `check` — table-driven tests
+  over edit/advance/retract sequences are the replacement for the old C
+  golden scripts.
+- **Backend unit tests.** Statement splitting, symbol extraction, and diag
+  JSON parsing live in `src-tauri/src/emerald.rs` and `lib.rs` behind pure
+  functions; cover them with `cargo test`.
 - **Position-encoding tests.** Emoji and combining characters, asserting byte ↔
-  UTF-16 ↔ line/col round-trips. Same test as DESIGN.md §8; steal it.
+  UTF-16 ↔ line/col round-trips through the editor's caret mapping. Same test
+  as DESIGN.md §8; steal it.
 - **Retraction tests.** An edit above the locus must retract to the right
   statement. Off-by-one here is the bug users will hit hourly.
 - **Overlay tests.** On-disk text and buffer text disagree; assert the check
@@ -622,8 +592,10 @@ Stated so they do not creep in:
   project.
 - **Not a formatter host.** Formatting needs a pretty-printer and comment
   retention (DESIGN.md §6 item 11) and belongs in the compiler, not here.
-- **Not cross-platform, yet.** macOS only. The `core/` split means a Linux port
-  is a UI backend, but do not carry the burden before there is a second user.
+- **Not cross-platform, yet.** macOS is the only tested target today. Tauri
+  keeps Windows and Linux open (the frontend is plain DOM and the backend is
+  std-only Rust apart from tree-sitter), but do not carry the burden before
+  there is a second user.
 - **No proof script language.** If Emerald ever grows tactics, this spec needs a
   real revision, not an extension.
 
@@ -631,8 +603,8 @@ Stated so they do not creep in:
 
 ## 16. Open questions — revisit when the language evolves
 
-These are the reasons this project is parked, and each one is a question about
-Emerald rather than about the IDE.
+These are the reasons the deeper features are parked, and each one is a
+question about Emerald rather than about the IDE.
 
 1. **Does a proof fragment arrive?** `docs/research-directions.md` lists "a
    proof fragment that actually means something" as a track. If it lands with a
@@ -654,27 +626,37 @@ Emerald rather than about the IDE.
    is borrowed from a language with a linear proof script. Emerald programs are
    ordinary programs; it is possible the right interaction is "check everything,
    always" (DrRacket) plus a rich environment inspector, with no locus at all.
-   Worth prototyping both before committing — the cimgui prototype in §6 exists
-   for exactly this question.
+   Worth prototyping both before committing — the session state machine is
+   small enough that a no-locus variant can live behind the same command
+   boundary and be compared directly.
 
 ---
 
-## Suggested order
+## Where things stand, and what is next
+
+The IDE shell is built and shipped as a pure Tauri app: editor with locus
+shading and tree-sitter highlighting, the proof session over
+`emeraldc --check` (prefix truncation done client-side, materialised next to
+the source so relative imports resolve), goal panel, obligation ledger,
+REPL pane, compiler discovery, `.app` bundling.
 
 ```
-  ../emerald: end positions → parser error recovery → loader overlay hook
-        →  --check --upto  →  statement outline in --lsp-symbols
-        →  --env-at (narrowing reasons: the real work)
+   done: Tauri shell + session state machine + panels + ledger + repl
+         + bundled emeraldc resolution
 
-  emerald-ide: core/ buffer + doc + proc + json
-        →  headless/ session driver + golden tests
-        →  cimgui prototype: locus, shading, diagnostics, goal panel
-        →  decide the toolkit  →  real UI
-        →  obligation ledger  →  repl pane
-        →  LSP client (hover, goto-def, completion) — last
+   ../emerald: --check --upto  (replaces client-side prefix truncation)
+         →  statement outline in --lsp-symbols
+         →  --env-at (narrowing reasons: the real work — unblocks the
+            goal panel's narrowed types and the REPL's inferred types)
+
+   emerald-ide: file watching (stat poll first)
+         →  structural type diff in diagnostics rendering
+         →  sidecar `obligations.toml` for out-of-reach propositions
+         →  LSP client (hover, goto-def, completion) — last
 ```
 
-The first three compiler steps are shared with `emerald-lsp` and should be done
-once, for both. Everything in the IDE before "decide the toolkit" runs without a
-window, and that is deliberate: the interesting part of this program is a state
-machine and a protocol, and both are fully testable in the dark.
+The remaining compiler work is shared with `emerald-lsp` and should be done
+once, for both. On the IDE side the interesting part was always the state
+machine and the protocol; both now live behind the command boundary where they
+are testable without a window (`cargo test`, plus table-driven tests against a
+fake `check`).

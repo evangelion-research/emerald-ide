@@ -1,6 +1,0 @@
-# subprocess failure: the resolved "compiler" cannot be executed (EMERALDC
-# points at a directory), so the IDE must fall back to the builtin linter
-# without crashing; the linter must then re-check on edit (SPEC.md §14)
-open tests/fixtures/unterminated.rald
-edit 3 1 "}"
-checkall

@@ -1,8 +1,0 @@
-# stdlib imports: resolve via the compiler's stdlib root; a missing module
-# must fail the check at the import statement (SPEC.md §5)
-open tests/fixtures/imports/main.rald
-retract
-advance
-open tests/fixtures/imports/bad.rald
-checkall
-retract

@@ -1,5 +1,0 @@
-# multi/main_bad.rald — the imported module has an internal type error
-from vec_bad import add
-
-a = add(1, 2)
-b = add(a, 3)

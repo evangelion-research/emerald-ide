@@ -1,7 +1,0 @@
-# A file with type errors (SPEC.md §1d retraction on edit)
-open ../emerald/tests/check/bad_annot.rald
-retract
-advance
-advance
-edit 2 1 "n = 1"
-checkall

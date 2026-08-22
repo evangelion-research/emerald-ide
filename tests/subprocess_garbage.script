@@ -1,5 +1,0 @@
-# subprocess failure: emeraldc exits non-zero with no JSON diagnostics to
-# map (run with EMERALDC=/usr/bin/false) — must surface SESS_ERROR rather
-# than silently accepting the prefix
-open ../emerald/tests/check/bad_annot.rald
-checkall
