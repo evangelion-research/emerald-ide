@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Emerald IDE",
+  "version": "0.3.0",
+  "identifier": "dev.evangelion.emerald-ide",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Emerald IDE",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 880,
+        "minHeight": 520,
+        "theme": "Dark",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 14, "y": 14 }
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "DeveloperTool",
+    "shortDescription": "Proof-assistant IDE for Emerald",
+    "longDescription": "A CoqIDE-style proof session for the Emerald language: accepted-prefix checking, goal panel, obligation ledger, and a typechecking REPL.",
+    "icon": ["icons/icon.icns"]
+  }
+}

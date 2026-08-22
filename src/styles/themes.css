@@ -1,0 +1,171 @@
+/* ---------------------------------------------------------------- themes
+   Four built-in themes. Every colour the UI uses is a variable here;
+   switching is a single data-theme attribute on <html>. */
+
+/* emerald — default. deep charcoal, single emerald accent */
+html[data-theme="emerald"] {
+  --bg0: #0d1210;
+  --bg1: #101613;
+  --bg2: #151c18;
+  --bg3: #1b2420;
+  --bg-editor: #0e1411;
+  --border: #1f2a24;
+  --fg: #d7e2da;
+  --fg-dim: #8fa096;
+  --fg-faint: #5a6a60;
+  --accent: #3ddc97;
+  --ok: #4ade80;
+  --warn: #eab308;
+  --err: #f87171;
+  --caret: #3ddc97;
+  --selection: rgba(61, 220, 151, 0.16);
+  --prefix-ok: rgba(61, 220, 151, 0.055);
+  --prefix-fail: rgba(248, 113, 113, 0.075);
+  --locus: #3ddc97;
+  --obligation: #eab308;
+  --gutter-fg: #45544b;
+  --code-plain: #c9d6cd;
+  --scrollbar: rgba(215, 226, 218, 0.14);
+  --scrollbar-hover: rgba(215, 226, 218, 0.26);
+
+  --tk-comment: #55685c;
+  --tk-string: #a8cc8c;
+  --tk-escape: #d3b98a;
+  --tk-number: #d0bf78;
+  --tk-constant: #d0bf78;
+  --tk-keyword: #3ddc97;
+  --tk-function: #82c4e8;
+  --tk-type: #7ee0c2;
+  --tk-builtin: #56b6c2;
+  --tk-param: #d7a65f;
+  --tk-member: #b8a7e0;
+  --tk-namespace: #7fd1c0;
+  --tk-operator: #8fa096;
+  --tk-punct: #6d7d72;
+}
+
+/* tokyo — cool blue-violet night */
+html[data-theme="tokyo"] {
+  --bg0: #16161e;
+  --bg1: #1a1b26;
+  --bg2: #1f2029;
+  --bg3: #262833;
+  --bg-editor: #17171f;
+  --border: #262833;
+  --fg: #c0caf5;
+  --fg-dim: #8b93b8;
+  --fg-faint: #565b78;
+  --accent: #7aa2f7;
+  --ok: #9ece6a;
+  --warn: #e0af68;
+  --err: #f7768e;
+  --caret: #7aa2f7;
+  --selection: rgba(122, 162, 247, 0.18);
+  --prefix-ok: rgba(158, 206, 106, 0.06);
+  --prefix-fail: rgba(247, 118, 142, 0.08);
+  --locus: #7aa2f7;
+  --obligation: #e0af68;
+  --gutter-fg: #3d4257;
+  --code-plain: #a9b1d6;
+  --scrollbar: rgba(192, 202, 245, 0.14);
+  --scrollbar-hover: rgba(192, 202, 245, 0.26);
+
+  --tk-comment: #565892;
+  --tk-string: #9ece6a;
+  --tk-escape: #bb9af7;
+  --tk-number: #ff9e64;
+  --tk-constant: #ff9e64;
+  --tk-keyword: #bb9af7;
+  --tk-function: #7aa2f7;
+  --tk-type: #2ac3de;
+  --tk-builtin: #0db9d7;
+  --tk-param: #e0af68;
+  --tk-member: #73daca;
+  --tk-namespace: #2ac3de;
+  --tk-operator: #89ddff;
+  --tk-punct: #6b7089;
+}
+
+/* mono — pure grayscale, white accent */
+html[data-theme="mono"] {
+  --bg0: #111111;
+  --bg1: #141414;
+  --bg2: #191919;
+  --bg3: #202020;
+  --bg-editor: #121212;
+  --border: #232323;
+  --fg: #e6e6e6;
+  --fg-dim: #9a9a9a;
+  --fg-faint: #5c5c5c;
+  --accent: #ffffff;
+  --ok: #bdbdbd;
+  --warn: #8f8f8f;
+  --err: #ffffff;
+  --caret: #ffffff;
+  --selection: rgba(255, 255, 255, 0.14);
+  --prefix-ok: rgba(255, 255, 255, 0.05);
+  --prefix-fail: rgba(255, 255, 255, 0.11);
+  --locus: #ffffff;
+  --obligation: #8f8f8f;
+  --gutter-fg: #3a3a3a;
+  --code-plain: #d4d4d4;
+  --scrollbar: rgba(230, 230, 230, 0.13);
+  --scrollbar-hover: rgba(230, 230, 230, 0.25);
+
+  --tk-comment: #575757;
+  --tk-string: #a8a8a8;
+  --tk-escape: #cfcfcf;
+  --tk-number: #cfcfcf;
+  --tk-constant: #cfcfcf;
+  --tk-keyword: #ffffff;
+  --tk-function: #e6e6e6;
+  --tk-type: #bdbdbd;
+  --tk-builtin: #a8a8a8;
+  --tk-param: #9a9a9a;
+  --tk-member: #b5b5b5;
+  --tk-namespace: #b5b5b5;
+  --tk-operator: #808080;
+  --tk-punct: #666666;
+}
+
+/* paper — light, ink-on-paper */
+html[data-theme="paper"] {
+  --bg0: #faf9f7;
+  --bg1: #f3f1ed;
+  --bg2: #ebe8e2;
+  --bg3: #e2ded6;
+  --bg-editor: #fcfbfa;
+  --border: #ddd8cf;
+  --fg: #33312c;
+  --fg-dim: #6f6a60;
+  --fg-faint: #a29b8e;
+  --accent: #0f8a5f;
+  --ok: #17803d;
+  --warn: #b45309;
+  --err: #dc2626;
+  --caret: #0f8a5f;
+  --selection: rgba(15, 138, 95, 0.14);
+  --prefix-ok: rgba(23, 128, 61, 0.055);
+  --prefix-fail: rgba(220, 38, 38, 0.07);
+  --locus: #0f8a5f;
+  --obligation: #b45309;
+  --gutter-fg: #c0bab0;
+  --code-plain: #3d3a34;
+  --scrollbar: rgba(51, 49, 44, 0.16);
+  --scrollbar-hover: rgba(51, 49, 44, 0.28);
+
+  --tk-comment: #a29b8e;
+  --tk-string: #4d7c0f;
+  --tk-escape: #b45309;
+  --tk-number: #b45309;
+  --tk-constant: #b45309;
+  --tk-keyword: #0f8a5f;
+  --tk-function: #2563eb;
+  --tk-type: #0e7490;
+  --tk-builtin: #0e7490;
+  --tk-param: #92600a;
+  --tk-member: #7c3aed;
+  --tk-namespace: #0e7490;
+  --tk-operator: #6f6a60;
+  --tk-punct: #8a8478;
+}

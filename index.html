@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Emerald IDE</title>
+    <link rel="stylesheet" href="/src/styles/base.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="titlebar" data-tauri-drag-region>
+        <div class="tb-cluster tb-left" data-tauri-drag-region>
+          <span class="brand" data-tauri-drag-region>emerald<span class="brand-dim">·ide</span></span>
+          <span class="tb-sep" data-tauri-drag-region></span>
+          <span id="file-crumb">untitled.rald</span>
+          <span id="dirty-dot" class="dot hidden"></span>
+          <span id="session-pill" class="pill">…</span>
+        </div>
+        <div class="tb-cluster tb-right">
+          <div class="proof-controls" title="proof session">
+            <button class="tbtn" id="btn-retract" title="retract ⌘↑">&#9664;</button>
+            <button class="tbtn" id="btn-advance" title="advance ⌘↓">&#9654;</button>
+            <button class="tbtn" id="btn-goto" title="check to cursor ⌘&#8594;">&#8982;</button>
+            <button class="tbtn wide" id="btn-checkall" title="check all &#8984;&#9166;">run</button>
+          </div>
+          <select id="theme-select" class="theme-select" title="theme"></select>
+        </div>
+      </header>
+
+      <main id="workspace">
+        <section id="editor-pane">
+          <div id="gutter"><div id="gutter-inner"></div></div>
+          <div id="scroller">
+            <div id="content">
+              <div id="layer-regions"></div>
+              <pre id="layer-code"><code id="code-el"></code></pre>
+              <div id="layer-diags"></div>
+              <textarea
+                id="layer-input"
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                wrap="off"
+              ></textarea>
+            </div>
+          </div>
+        </section>
+
+        <aside id="rail">
+          <nav id="rail-tabs">
+            <button class="rtab active" data-tab="goal">goal</button>
+            <button class="rtab" data-tab="symbols">symbols</button>
+            <button class="rtab" data-tab="ledger">ledger</button>
+            <button class="rtab" data-tab="diagnostics">diagnostics</button>
+            <button class="rtab" data-tab="repl">repl</button>
+          </nav>
+          <div id="rail-body">
+            <section class="panel active" id="panel-goal"></section>
+            <section class="panel" id="panel-symbols"></section>
+            <section class="panel" id="panel-ledger"></section>
+            <section class="panel" id="panel-diagnostics"></section>
+            <section class="panel" id="panel-repl">
+              <div id="repl-log"></div>
+              <form id="repl-form">
+                <span class="repl-prompt">&gt;</span>
+                <input id="repl-input" placeholder="expression…" spellcheck="false" autocomplete="off" />
+              </form>
+            </section>
+          </div>
+        </aside>
+      </main>
+
+      <footer id="statusbar">
+        <span id="st-left"></span>
+        <span class="st-spring"></span>
+        <span id="st-right"></span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
